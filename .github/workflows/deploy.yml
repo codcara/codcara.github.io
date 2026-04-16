@@ -1,0 +1,85 @@
+name: Deploy Markdown to GitHub Pages
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - '**.md'
+      - 'docs/**'
+      - '.github/workflows/deploy.yml'
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: "pages"
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install markdown converter
+        run: npm install -g marked
+
+      - name: Convert Markdown to HTML
+        run: |
+          mkdir -p _site
+          cp style.css _site/style.css 2>/dev/null || true
+
+          # Build index page listing all .md files
+          echo "<!DOCTYPE html><html lang='en'><head>" > _site/index.html
+          echo "<meta charset='UTF-8'><meta name='viewport' content='width=device-width, initial-scale=1.0'>" >> _site/index.html
+          echo "<title>Chaparral Aerospace and Rocketry Association</title><link rel='stylesheet' href='style.css'></head><body>" >> _site/index.html
+
+          for f in $(find . -name '*.md' ! -path './.github/*' ! -name 'README.md' | sort); do
+            filename=$(basename "$f" .md)
+            outpath="_site/${filename}.html"
+            title=$(head -1 "$f" | sed 's/^# //')
+
+            # Convert individual markdown file to HTML
+            echo "<!DOCTYPE html><html lang='en'><head>" > "$outpath"
+            echo "<meta charset='UTF-8'><meta name='viewport' content='width=device-width, initial-scale=1.0'>" >> "$outpath"
+            echo "<title>${title}</title><link rel='stylesheet' href='style.css'></head><body>" >> "$outpath"
+            echo "<header><a href='index.html' class='back'>← All Notes</a><p class='updated'>Updated: $(date -u +'%B %d, %Y')</p></header>" >> "$outpath"
+            echo "<main class='article'>" >> "$outpath"
+            marked "$f" >> "$outpath"
+            echo "</main></body></html>" >> "$outpath"
+
+            echo "<li><a href='${filename}.html'>${title:-$filename}</a></li>" >> _site/index.html
+          done
+
+          # Include README.md as the homepage content if it exists
+          if [ -f README.md ]; then
+            echo "</ul></section><section class='readme'>" >> _site/index.html
+            marked README.md >> _site/index.html
+          fi
+
+          echo "</main></body></html>" >> _site/index.html
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: '_site'
+
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
